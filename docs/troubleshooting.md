@@ -66,6 +66,8 @@ To resolve this, grant Bluetooth permission to the MCP client application in `Sy
 
 On recent macOS versions, macOS blocks other applications from reading browser profile folders under `~/Library/Application Support/Google/Chrome` without showing a permission prompt (TCC `kTCCServiceSystemPolicyAppDataDetailed`). Because the MCP server inherits the permissions of the terminal or IDE host application that launched it, reading `DevToolsActivePort` fails with `EPERM: operation not permitted`.
 
+Permission-denied discovery failures now explain that macOS denied access to `DevToolsActivePort` and include the Files & Folders remedy. The original filesystem error remains in the cause chain.
+
 To resolve this, grant the terminal or MCP client host application access to **Google Chrome** in `System Settings > Privacy & Security > Files & Folders`. The change applies immediately without restarting the terminal or MCP client.
 
 ### Remote debugging between virtual machine (VM) and host fails

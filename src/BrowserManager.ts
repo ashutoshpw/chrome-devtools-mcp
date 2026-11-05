@@ -24,6 +24,39 @@ import {
 } from './utils/logger.js';
 import {isAllowedUrl} from './utils/url.js';
 
+function profilePermissionError(error: unknown): Error | undefined {
+  if (os.platform() !== 'darwin') {
+    return;
+  }
+  const seen = new Set<unknown>();
+  let cause = error;
+  let permissionDenied = false;
+  let activePort = false;
+  while (cause && typeof cause === 'object' && !seen.has(cause)) {
+    seen.add(cause);
+    if ('code' in cause) {
+      permissionDenied ||= cause.code === 'EPERM' || cause.code === 'EACCES';
+    }
+    if ('path' in cause && typeof cause.path === 'string') {
+      activePort ||= path.basename(cause.path) === 'DevToolsActivePort';
+    }
+    if ('message' in cause && typeof cause.message === 'string') {
+      activePort ||= cause.message.includes('DevToolsActivePort');
+    }
+    cause = 'cause' in cause ? cause.cause : undefined;
+  }
+  if (!permissionDenied || !activePort) {
+    return;
+  }
+  return new Error(
+    'Could not connect to Chrome because macOS denied access to DevToolsActivePort. ' +
+      'In System Settings > Privacy & Security > Files & Folders, allow the terminal ' +
+      'or MCP client host application to access Google Chrome (or the corresponding ' +
+      'Chrome channel), then retry.',
+    {cause: error},
+  );
+}
+
 export interface BrowserManagerOptions {
   logFile?: fs.WriteStream;
 }
@@ -404,6 +437,10 @@ export class BrowserManager {
           const browserWSEndpoint = `ws://127.0.0.1:${port}${rawPath}`;
           connectOptions.browserWSEndpoint = browserWSEndpoint;
         } catch (error) {
+          const permissionError = profilePermissionError(error);
+          if (permissionError) {
+            throw permissionError;
+          }
           throw new Error(
             `Could not connect to Chrome in ${userDataDir}. Check if Chrome is running and remote debugging is enabled by going to chrome://inspect/#remote-debugging.`,
             {
@@ -436,6 +473,12 @@ export class BrowserManager {
       connected.once('disconnected', () => this.#evictIfCurrent(connected));
       return connected;
     } catch (err) {
+      const permissionError = autoConnect
+        ? profilePermissionError(err)
+        : undefined;
+      if (permissionError) {
+        throw permissionError;
+      }
       throw new Error(
         `Could not connect to Chrome. ${autoConnect ? `Check if Chrome is running and remote debugging is enabled by going to chrome://inspect/#remote-debugging.` : `Check if Chrome is running.`}`,
         {
