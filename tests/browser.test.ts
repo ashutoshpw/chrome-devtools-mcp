@@ -5,6 +5,7 @@
  */
 
 import assert from 'node:assert';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {describe, it} from 'node:test';
@@ -686,6 +687,84 @@ describe('browser', () => {
       });
     });
   });
+
+  for (const code of ['EPERM', 'EACCES']) {
+    for (const customProfile of [false, true]) {
+      it(`explains macOS ${code} for ${customProfile ? 'custom' : 'default'} profile discovery`, async () => {
+        sinon.stub(os, 'platform').returns('darwin');
+        const root = Object.assign(
+          new Error(code + ': DevToolsActivePort denied'),
+          {code},
+        );
+        const original = customProfile
+          ? root
+          : new Error('Could not find DevToolsActivePort', {cause: root});
+        if (customProfile) {
+          sinon.stub(fs.promises, 'readFile').rejects(root);
+        } else {
+          sinon.stub(puppeteer, 'connect').rejects(original);
+        }
+        const manager = new BrowserManager(
+          createMockServerConfig({
+            autoConnect: true,
+            ...(customProfile ? {userDataDir: '/mock/profile'} : {}),
+          }),
+        );
+        await assert.rejects(manager.ensureBrowser(), error => {
+          assert.ok(error instanceof Error);
+          assert.match(error.message, /macOS denied access/);
+          assert.match(error.message, /Files & Folders/);
+          assert.strictEqual(error.cause, original);
+          return true;
+        });
+      });
+    }
+  }
+  for (const scenario of [
+    'missing',
+    'unrelated',
+    'linux',
+    'endpoint',
+    'invalid',
+    'cycle',
+  ]) {
+    it(`preserves the connection diagnosis for ${scenario}`, async () => {
+      sinon
+        .stub(os, 'platform')
+        .returns(scenario === 'linux' ? 'linux' : 'darwin');
+      const error = Object.assign(
+        new Error(
+          scenario === 'unrelated' ? 'socket denied' : 'DevToolsActivePort',
+        ),
+        {
+          code:
+            scenario === 'missing'
+              ? 'ENOENT'
+              : scenario === 'invalid'
+                ? 'EINVAL'
+                : 'EPERM',
+        },
+      );
+      if (scenario === 'cycle') {
+        error.code = 'ENOENT';
+        error.cause = error;
+      }
+      sinon.stub(puppeteer, 'connect').rejects(error);
+      const manager = new BrowserManager(
+        createMockServerConfig(
+          scenario === 'endpoint'
+            ? {browserUrl: 'http://localhost:9222'}
+            : {autoConnect: true},
+        ),
+      );
+      await assert.rejects(manager.ensureBrowser(), result => {
+        assert.ok(result instanceof Error);
+        assert.doesNotMatch(result.message, /macOS denied access/);
+        assert.strictEqual(result.cause, error);
+        return true;
+      });
+    });
+  }
 
   describe('rootSandboxLaunchError', () => {
     const targetClosed = new Error(
